@@ -15,6 +15,10 @@ const withPWA = withPWAInit({
 
 const nextConfig: NextConfig = {
   /* config options here */
+  generateBuildId: async () => {
+    // Force new build ID to bust cache
+    return `build-${Date.now()}`;
+  },
 };
 
 // export default withPWA(nextConfig);
