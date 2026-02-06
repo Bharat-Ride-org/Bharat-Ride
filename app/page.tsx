@@ -8,6 +8,15 @@ export default function ModeSelection() {
   const [showSplash, setShowSplash] = useState(true);
 
   useEffect(() => {
+    // Clear old localStorage if app version changed (force fresh start)
+    const APP_VERSION = "2.0"; // Increment this to force clear
+    const storedVersion = localStorage.getItem("app_version");
+
+    if (storedVersion !== APP_VERSION) {
+      localStorage.clear();
+      localStorage.setItem("app_version", APP_VERSION);
+    }
+
     const timer = setTimeout(() => {
       setShowSplash(false);
     }, 2500);
