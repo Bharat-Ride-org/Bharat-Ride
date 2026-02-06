@@ -1,38 +1,157 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { DriverService } from "@/services/driver";
+import { SocketService } from "@/services/socket";
 
 type DriverStatus = "OFFLINE" | "ONLINE" | "PINGING" | "ACCEPTED";
 
+type PingData = {
+    passenger_id: string;
+    eta_minutes: number;
+    distance: string; // e.g. "350m" (mock for now if not sent)
+};
+
+import { useUserStore } from "@/store/useUserStore";
+
 export default function DriverHome() {
-    const [status, setStatus] = useState<DriverStatus>("OFFLINE");
-    const [pingTimer, setPingTimer] = useState<NodeJS.Timeout | null>(null);
+    const { userId, isOnline, setOnline, setOffline } = useUserStore();
+    // Local state only for Ping/Ride flow, as that is transient
+    const [status, setLocalStatus] = useState<DriverStatus>("OFFLINE");
+    const router = useRouter();
+    const [pingData, setPingData] = useState<PingData | null>(null);
 
-    // Simulation Logic
+    // Sync Store with Local UI
     useEffect(() => {
-        if (status === "ONLINE") {
-            // Simulate incoming ping after 3-5 seconds
-            const timer = setTimeout(() => {
-                setStatus("PINGING");
-            }, 4000);
-            setPingTimer(timer);
-        } else {
-            if (pingTimer) {
-                clearTimeout(pingTimer);
-                setPingTimer(null);
-            }
+        if (isOnline && status === "OFFLINE") setLocalStatus("ONLINE");
+        if (!isOnline && status !== "OFFLINE") setLocalStatus("OFFLINE");
+    }, [isOnline]);
+
+    const [locationInterval, setLocationInterval] = useState<NodeJS.Timeout | null>(null);
+
+    // Initial Auth Check & Setup
+    useEffect(() => {
+        useUserStore.getState().initialize();
+        const storedAuth = localStorage.getItem("is_auth");
+        if (!storedAuth) {
+            router.replace("/");
         }
+    }, [router]);
 
+    // Cleanup on unmount
+    useEffect(() => {
         return () => {
-            if (pingTimer) clearTimeout(pingTimer);
+            SocketService.disconnect();
+            if (locationInterval) clearInterval(locationInterval);
+            // Note: We don't setOffline here to allow background persistence if needed, 
+            // but for MVP we might want to cleanup.
         };
-    }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, []);
 
-    const goOnline = () => setStatus("ONLINE");
-    const goOffline = () => setStatus("OFFLINE");
-    const acceptPing = () => setStatus("ACCEPTED");
-    const ignorePing = () => setStatus("ONLINE"); // Go back to waiting
-    const cancelRide = () => setStatus("ONLINE"); // Reset for demo
+    const goOnline = async () => {
+        if (!userId) return;
+
+        try {
+            // 1. API Call
+            await DriverService.goOnline(userId);
+            setOnline(); // Store Update
+            setLocalStatus("ONLINE");
+
+            // 2. Socket Connect
+            const socket = SocketService.connect(userId, "driver");
+
+            // LISTENER: New Ping
+            socket?.on("new_ping", (data: any) => {
+                console.log("New Ping Received:", data);
+                setPingData({
+                    passenger_id: data.passenger_id,
+                    eta_minutes: data.eta_minutes || 5,
+                    distance: "400m" // Mock distance for UI
+                });
+                setLocalStatus("PINGING");
+            });
+
+            // LISTENER: Disconnect
+            socket?.on("disconnect", () => {
+                console.log("Socket Disconnected");
+                setOnline(); // Or setOffline? 
+                // Requirement says "show Reconnect UI" or "You're offline"
+                // For MVP, let's switch to a 'RECONNECTING' local state or just keep it simple
+                // If we lose connection, we are effectively offline regarding receiving pings
+                // But we might want to try auto-reconnect. 
+                // valid strategy: setLocalStatus("OFFLINE") and let user try again
+                alert("Connection lost. You are now offline.");
+                setOffline();
+                setLocalStatus("OFFLINE");
+            });
+
+            // 3. Start Location Tracking (Simulated for MVP)
+            // In a real app, use navigator.geolocation.watchPosition
+            const interval = setInterval(() => {
+                // Mock Location: Delhi CP area
+                const lat = 28.6139 + (Math.random() * 0.001);
+                const lng = 77.2090 + (Math.random() * 0.001);
+
+                SocketService.emitLocation({
+                    driver_id: parseInt(userId), // Fixed: used userId from store
+                    lat,
+                    lng
+                });
+            }, 8000); // 8 seconds
+            setLocationInterval(interval);
+
+        } catch (error) {
+            alert("Failed to go online");
+        }
+    };
+
+    const goOffline = async () => {
+        if (!userId) return;
+
+        try {
+            await DriverService.goOffline(userId);
+            setOffline(); // Store Update
+            setLocalStatus("OFFLINE");
+
+            SocketService.disconnect();
+            if (locationInterval) {
+                clearInterval(locationInterval);
+                setLocationInterval(null);
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    };
+
+    const acceptPing = () => {
+        if (!pingData || !userId) return; // Fixed: check userId
+
+        SocketService.getSocket()?.emit("ping_accepted", {
+            ping_id: "preview_ping_id", // In real app, this comes from new_ping data
+            driver_id: userId, // Fixed: use userId from store
+            passenger_id: pingData.passenger_id
+        });
+
+        setLocalStatus("ACCEPTED");
+    };
+
+    const ignorePing = () => {
+        if (!pingData || !userId) return; // Fixed: check userId
+
+        SocketService.getSocket()?.emit("ping_ignored", {
+            driver_id: userId, // Fixed: use userId from store
+            passenger_id: pingData.passenger_id
+        });
+
+        setLocalStatus("ONLINE");
+        setPingData(null);
+    };
+
+    const cancelRide = () => {
+        setLocalStatus("ONLINE");
+        setPingData(null);
+    };
 
     return (
         <div className={`flex min-h-screen flex-col font-sans transition-colors duration-500 ${status === "OFFLINE" ? "bg-red-50" :
@@ -108,7 +227,7 @@ export default function DriverHome() {
             )}
 
             {/* 6️⃣ Modal: Incoming Ping */}
-            {status === "PINGING" && (
+            {status === "PINGING" && pingData && (
                 <div className="absolute inset-0 z-50 flex items-end justify-center sm:items-center bg-black/40 backdrop-blur-[2px] p-4">
                     <div className="w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl animate-in slide-in-from-bottom-10 zoom-in-95 duration-300 ring-1 ring-black/5">
 
@@ -123,7 +242,7 @@ export default function DriverHome() {
                         {/* Ping Body */}
                         <div className="p-6 flex flex-col gap-6 items-center bg-white">
                             <div className="text-center">
-                                <p className="text-5xl font-bold text-zinc-900 tracking-tight">350<span className="text-2xl text-zinc-400 ml-1">m</span></p>
+                                <p className="text-5xl font-bold text-zinc-900 tracking-tight">400<span className="text-2xl text-zinc-400 ml-1">m</span></p>
                                 <p className="text-zinc-500 mt-1 font-medium">Distance to pickup</p>
                             </div>
 
@@ -131,8 +250,8 @@ export default function DriverHome() {
 
                             <div className="flex justify-around w-full">
                                 <div className="text-center">
-                                    <p className="text-zinc-400 text-xs uppercase font-bold tracking-wider">ETA</p>
-                                    <p className="text-xl font-bold text-blue-600">~5 min</p>
+                                    <p className="text-zinc-400 text-xs uppercase font-bold tracking-wider">coming in</p>
+                                    <p className="text-xl font-bold text-blue-600">~{pingData.eta_minutes} min</p>
                                 </div>
                                 <div className="text-center">
                                     <p className="text-zinc-400 text-xs uppercase font-bold tracking-wider">RATING</p>
@@ -168,17 +287,17 @@ export default function DriverHome() {
                             ⏳
                         </div>
                         <h1 className="text-center text-2xl font-bold text-zinc-900">
-                            Coming in 5 min
+                            Accepted!
                         </h1>
                         <p className="mt-2 text-zinc-500">
-                            Passenger is waiting for you
+                            Please proceed to pickup point.
                         </p>
 
                         <div className="mt-8 w-full max-w-xs bg-zinc-50 rounded-2xl p-4 flex gap-4 items-center border border-zinc-100">
                             <div className="h-12 w-12 rounded-full bg-zinc-200 flex items-center justify-center text-xl">👤</div>
                             <div>
-                                <p className="font-bold text-zinc-900">Passenger #849</p>
-                                <p className="text-xs text-zinc-500">Cash • 350m</p>
+                                <p className="font-bold text-zinc-900">Passenger #{pingData?.passenger_id || "..."}</p>
+                                <p className="text-xs text-zinc-500">Cash • 400m</p>
                             </div>
                         </div>
                     </div>

@@ -14,83 +14,84 @@ export default function ModeSelection() {
     return () => clearTimeout(timer);
   }, []);
 
-  const selectMode = (mode: "passenger" | "driver") => {
-    if (mode === "passenger") {
-      router.push("/passenger");
+  // Updated: Step 1 - Mode Selection & Auth Check
+  const handleModeSelect = (role: "passenger" | "driver") => {
+    // 1. Save Role
+    localStorage.setItem("role", role);
+
+    // 2. Check Auth
+    const isAuth = localStorage.getItem("is_auth");
+
+    if (isAuth === "true") {
+      // Returning user -> Skip OTP
+      router.push(`/${role}`);
     } else {
-      router.push("/driver");
+      // First-time user -> OTP
+      router.push("/auth/otp");
     }
   };
 
-  return (
-    <main className="relative flex min-h-screen flex-col justify-center px-4 bg-[#F9FAFB] font-sans">
-
-      {/* 0. Splash Screen Overlay */}
-      <div
-        className={`absolute inset-0 z-50 flex flex-col items-center justify-center bg-white transition-opacity duration-700 ${showSplash ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-          }`}
-      >
-        <div className="flex flex-col items-center animate-in zoom-in-50 duration-700 fade-in">
-          <span className="text-7xl mb-4 drop-shadow-sm">🛺</span>
-          <h1 className="text-4xl font-bold tracking-tight text-[#111827] drop-shadow-sm">
-            Bharat Ride
-          </h1>
-          <p className="mt-2 text-lg text-[#4B5563] font-medium">
-            Apna Rickshaw, Apni Ride
-          </p>
+  if (showSplash) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#FFC107] transition-opacity duration-700">
+        {/* Splash Content... same as before */}
+        <div className="relative h-40 w-40 animate-[zoomIn_0.8s_ease-out]">
+          <span className="text-8xl">🛺</span>
         </div>
-      </div>
-
-      {/* 1. App Identity (Top 25%) */}
-      <div className="flex flex-col items-center justify-center py-10">
-        <span className="text-6xl mb-3">🛺</span>
-        <h1 className="text-xl font-semibold tracking-tight text-[#111827]">
+        <h1 className="mt-6 animate-[fadeIn_1s_ease-out_0.5s_both] text-4xl font-extrabold tracking-tight text-zinc-900">
           Bharat Ride
         </h1>
-        <p className="text-[#4B5563] text-sm">
-          Nearby Finder
-        </p>
-        <p className="text-xs text-[#6B7280] mt-1">
-          Reduce waiting time
+        <p className="mt-2 animate-[fadeIn_1s_ease-out_1s_both] text-lg font-medium text-zinc-800/80">
+          Chalo, India.
         </p>
       </div>
+    );
+  }
 
-      {/* 2. Mode Cards (Main Focus) */}
-      <div className="flex flex-col gap-4 w-full max-w-sm mx-auto">
+  return (
+    <div className="flex h-screen flex-col items-center justify-center bg-zinc-50 p-6 font-sans">
+      <div className="w-full max-w-md space-y-8">
 
-        {/* Passenger Card */}
-        <button
-          onClick={() => selectMode("passenger")}
-          className="group relative flex h-32 w-full flex-col items-center justify-center rounded-2xl border border-blue-100 bg-white shadow-sm transition-all active:scale-95 text-blue-700"
-        >
-          <div className="flex flex-col items-center gap-2">
-            <span className="text-3xl text-blue-600">👤</span>
-            <span className="text-xl font-semibold">I AM A PASSENGER</span>
-            <span className="text-sm opacity-90 text-[#4B5563]">Find nearby rickshaws</span>
-          </div>
-        </button>
+        <div className="text-center">
+          <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900">Choose Mode</h1>
+          <p className="mt-2 text-zinc-500">How would you like to use Bharat Ride?</p>
+        </div>
 
-        {/* Driver Card */}
-        <button
-          onClick={() => selectMode("driver")}
-          className="group relative flex h-32 w-full flex-col items-center justify-center rounded-2xl border border-green-100 bg-white shadow-sm transition-all active:scale-95 text-green-700"
-        >
-          <div className="flex flex-col items-center gap-2">
-            <span className="text-3xl text-green-600">🛺</span>
-            <span className="text-xl font-semibold">I AM A DRIVER</span>
-            <span className="text-sm opacity-90 text-[#4B5563]">Get nearby passengers</span>
-          </div>
-        </button>
+        <div className="space-y-4">
+          {/* Passenger Card */}
+          <button
+            onClick={() => handleModeSelect("passenger")}
+            className="group relative flex w-full items-center justify-between overflow-hidden rounded-3xl bg-white p-6 text-left shadow-[0_8px_30px_rgba(0,0,0,0.04)] ring-1 ring-zinc-100 transition-all hover:scale-[1.02] hover:shadow-xl active:scale-95"
+          >
+            <div className="z-10">
+              <h3 className="text-xl font-bold text-zinc-900">Passenger</h3>
+              <p className="text-sm font-medium text-zinc-400 group-hover:text-zinc-600">Request a ride</p>
+            </div>
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-50 text-3xl group-hover:bg-yellow-100 transition-colors">
+              👋
+            </div>
+          </button>
 
-      </div>
+          {/* Driver Card */}
+          <button
+            onClick={() => handleModeSelect("driver")}
+            className="group relative flex w-full items-center justify-between overflow-hidden rounded-3xl bg-white p-6 text-left shadow-[0_8px_30px_rgba(0,0,0,0.04)] ring-1 ring-zinc-100 transition-all hover:scale-[1.02] hover:shadow-xl active:scale-95"
+          >
+            <div className="z-10">
+              <h3 className="text-xl font-bold text-zinc-900">Driver</h3>
+              <p className="text-sm font-medium text-zinc-400 group-hover:text-zinc-600">Accept rides</p>
+            </div>
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-50 text-3xl group-hover:bg-green-100 transition-colors">
+              🛺
+            </div>
+          </button>
+        </div>
 
-      {/* Footer / Helper */}
-      <div className="mt-12 text-center">
-        <p className="text-xs text-[#9CA3AF]">
-          We’ll remember this for next time
+        <p className="text-center text-xs text-zinc-400">
+          By continuing, you agree to our Terms & Privacy Policy
         </p>
-      </div>
 
-    </main>
+      </div>
+    </div>
   );
 }

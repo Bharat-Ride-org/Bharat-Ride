@@ -1,58 +1,137 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { PassengerService } from "@/services/passenger";
+import { SocketService } from "@/services/socket";
+import confetti from "canvas-confetti";
+import { useUserStore } from "@/store/useUserStore";
 
 // Types
 type TripTime = "2 min" | "5 min";
 type PingState = "none" | "sending" | "sent";
 
-interface Rickshaw {
-    id: string;
-    x: number; // Percentage 0-100
-    y: number; // Percentage 0-100
-    rotation: number; // Degrees
+// Driver Interface matching Backend Response
+interface Driver {
+    id: number;  // Backend returns 'id', not 'driver_id'
+    lat: number;
+    lng: number;
 }
 
-// Mock Data: 6 rickshaws nearby
-const MOCK_RICKSHAWS: Rickshaw[] = [
-    { id: "1", x: 20, y: 30, rotation: 45 },
-    { id: "2", x: 70, y: 20, rotation: -15 },
-    { id: "3", x: 80, y: 60, rotation: -90 },
-    { id: "4", x: 15, y: 75, rotation: 120 },
-    { id: "5", x: 45, y: 85, rotation: 180 },
-    { id: "6", x: 90, y: 40, rotation: -45 },
-];
+// Helper to convert backend driver to UI Rickshaw
+const mapDriverToRickshaw = (driver: Driver) => ({
+    id: driver.id.toString(),
+    x: ((driver.lng - 77.2000) * 10000) % 100, // Simple projection for demo
+    y: ((driver.lat - 28.6000) * 10000) % 100, // Simple projection for demo
+    rotation: Math.random() * 360, // Random rotation for now
+});
+
 
 export default function PassengerHome() {
-    const [selectedRickshawId, setSelectedRickshawId] = useState<string | null>(
-        null
-    );
+    const { userId } = useUserStore();
+    const [nearbyDrivers, setNearbyDrivers] = useState<Driver[]>([]);
+    const [selectedRickshawId, setSelectedRickshawId] = useState<string | null>(null);
     const [pingState, setPingState] = useState<PingState>("none");
+    const [acceptedDriverId, setAcceptedDriverId] = useState<number | null>(null);
+    const [showAcceptedModal, setShowAcceptedModal] = useState(false);
+    const router = useRouter();
+
+    // Initial Auth Check & Setup
+    useEffect(() => {
+        useUserStore.getState().initialize();
+        const storedAuth = localStorage.getItem("is_auth");
+        if (!storedAuth) {
+            router.replace("/");
+        }
+    }, [router]);
+
+    // Socket Connection
+    useEffect(() => {
+        if (userId) {
+            const socket = SocketService.connect(userId, "passenger");
+
+            socket?.on("ride_accepted", (data: any) => {
+                console.log("Ride Accepted:", data);
+                setAcceptedDriverId(data.driver_id);
+                setShowAcceptedModal(true);
+                setPingState("none");
+
+                // Confetti celebration!
+                confetti({
+                    particleCount: 100,
+                    spread: 70,
+                    origin: { y: 0.6 }
+                });
+            });
+        }
+        return () => {
+            // Optional: Disconnect based on improved logic? 
+            // For now keep as is for navigating around
+            // SocketService.disconnect();
+        };
+    }, [userId]);
+
+    // Fetch Nearby Drivers Loop
+    useEffect(() => {
+        const fetchDrivers = async () => {
+            // Mock center (Delhi CP)
+            const centerLat = 28.6139;
+            const centerLng = 77.2090;
+            const drivers = await PassengerService.getNearbyDrivers(centerLat, centerLng);
+            setNearbyDrivers(drivers);
+        };
+
+        fetchDrivers(); // Initial
+        const interval = setInterval(fetchDrivers, 5000); // Poll every 5s
+
+        return () => clearInterval(interval);
+    }, []);
+
     const [selectedTime, setSelectedTime] = useState<TripTime | null>(null);
 
     const handleRickshawTap = (id: string) => {
-        if (pingState === "sent") return; // Prevent changing selection after ping
+        if (pingState === "sent") return;
         setSelectedRickshawId(id);
     };
 
     const handleBackgroundTap = () => {
-        if (pingState === "sent") return; // Prevent deselecting after ping
+        if (pingState === "sent") return;
         setSelectedRickshawId(null);
     };
 
-    const handlePing = (time: TripTime) => {
+    const handlePing = async (time: TripTime) => {
+        if (!selectedRickshawId) return;
+
         setSelectedTime(time);
         setPingState("sending");
 
-        // Simulate network request
-        setTimeout(() => {
+        try {
+            if (!userId) throw new Error("No User ID");
+
+            await PassengerService.pingDriver(
+                userId,
+                selectedRickshawId,
+                time === "2 min" ? 2 : 5
+            );
+
             setPingState("sent");
-        }, 1500);
+
+            // Celebration Confetti!
+            confetti({
+                particleCount: 100,
+                spread: 70,
+                origin: { y: 0.6 },
+                colors: ['#FFC107', '#22C55E'] // Yellow & Green
+            });
+
+        } catch (error) {
+            alert("Failed to ping driver. Try again.");
+            setPingState("none");
+        }
     };
 
-    const selectedRickshaw = MOCK_RICKSHAWS.find(
-        (r) => r.id === selectedRickshawId
-    );
+    // UI Transformation
+    const displayedRickshaws = nearbyDrivers.map(mapDriverToRickshaw);
 
     return (
         <div className="relative flex h-screen flex-col overflow-hidden bg-zinc-50 font-sans">
@@ -88,8 +167,8 @@ export default function PassengerHome() {
                     </div>
                 </div>
 
-                {/* Rickshaw Markers */}
-                {MOCK_RICKSHAWS.map((rickshaw) => {
+                {/* Rickshaw Markers REFACTORED */}
+                {displayedRickshaws.map((rickshaw) => {
                     const isSelected = selectedRickshawId === rickshaw.id;
                     const isPinged = isSelected && pingState === "sent";
 
@@ -126,7 +205,7 @@ export default function PassengerHome() {
                             {/* Distance Label */}
                             {isSelected && !isPinged && (
                                 <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-zinc-800 shadow-md border border-zinc-100">
-                                    350m
+                                    ~350m
                                 </div>
                             )}
                         </button>
@@ -146,10 +225,10 @@ export default function PassengerHome() {
                     {!selectedRickshawId && (
                         <div className="flex flex-col items-center gap-1 text-center pb-2">
                             <h2 className="text-xl font-semibold text-zinc-900">
-                                {MOCK_RICKSHAWS.length} rickshaws nearby
+                                {nearbyDrivers.length > 0 ? `${nearbyDrivers.length} rickshaws nearby` : "Searching for rickshaws..."}
                             </h2>
                             <p className="text-sm text-zinc-500 animate-pulse">
-                                Select a vehicle on the map
+                                {nearbyDrivers.length > 0 ? "Select a vehicle on the map" : "Please wait..."}
                             </p>
 
                             {/* Decorative icons */}
@@ -176,10 +255,10 @@ export default function PassengerHome() {
                                     </div>
                                     <div>
                                         <h3 className="font-bold text-lg text-zinc-900 leading-tight">
-                                            {pingState === "sent" ? "Driver Notified" : "Rickshaw #289"}
+                                            {pingState === "sent" ? "Driver Notified" : `Rickshaw #${selectedRickshawId}`}
                                         </h3>
                                         <div className="flex items-center gap-2 text-sm text-zinc-500 mt-0.5">
-                                            <span>📍 350m away</span>
+                                            <span>📍 ~350m away</span>
                                             <span>•</span>
                                             <span>⭐ 4.8</span>
                                         </div>
@@ -243,6 +322,50 @@ export default function PassengerHome() {
                     )}
                 </div>
             </div>
+
+            {/* Driver Accepted Modal */}
+            {showAcceptedModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="bg-white rounded-3xl p-8 mx-4 max-w-sm w-full shadow-2xl animate-[scale-in_0.3s_ease-out]">
+                        {/* Success Icon */}
+                        <div className="flex justify-center mb-6">
+                            <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center">
+                                <span className="text-5xl">✅</span>
+                            </div>
+                        </div>
+
+                        {/* Message */}
+                        <h2 className="text-2xl font-bold text-center text-zinc-900 mb-2">
+                            Driver Accepted!
+                        </h2>
+                        <p className="text-center text-zinc-600 mb-6">
+                            Driver #{acceptedDriverId} has accepted your request and is waiting for you.
+                        </p>
+
+                        {/* Driver Info Card */}
+                        <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-lg">
+                                    D{acceptedDriverId}
+                                </div>
+                                <div className="flex-1">
+                                    <p className="font-semibold text-zinc-900">Your Driver</p>
+                                    <p className="text-sm text-zinc-500">On the way to pickup</p>
+                                </div>
+                                <div className="text-2xl">🛺</div>
+                            </div>
+                        </div>
+
+                        {/* Action Button */}
+                        <button
+                            onClick={() => setShowAcceptedModal(false)}
+                            className="w-full h-14 rounded-2xl bg-green-600 text-white font-bold text-lg hover:bg-green-700 active:scale-[0.98] transition-all shadow-lg"
+                        >
+                            Got it!
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
